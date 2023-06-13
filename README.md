@@ -15,6 +15,10 @@ Please reference [here](/docs/en/development/build.md). In addition, the followi
 
 Part of the benchmark results were performed under star schema benchmark.
 ![ssb_results](docs/hockey-docs/ssb_performance.png)
+
+## Publication
+
+* Yuhang Jia, Huiqi Hu, Xuan Zhou, and Weining Qian. "Hockey: A Hybrid PMem-SSD Storage Engine for Analytical Database." In Proceedings of the 31st ACM International Conference on Information & Knowledge Management, pp. 4877-4881. 2022.[[paper]](https://dl.acm.org/doi/pdf/10.1145/3511808.3557165)
 ## Misc
 
 Hockey is still in development, any contribution is welcome.
