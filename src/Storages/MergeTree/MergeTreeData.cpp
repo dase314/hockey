@@ -350,13 +350,13 @@ bool MergeTreeData::InsertMetaData(const std::string& part_name, persistent_ptr<
     return true;
 }
 
-bool MergeTreeData::DeleteMetaData(const std::string& /*part_name*/) const {
-    // persistent_ptr<pmem::obj::string> p_name;
-    // pmem::obj::transaction::run(pop_meta, [&] {
-    //     p_name = pmem::obj::make_persistent<pmem::obj::string>(part_name);
-    // });
-    // auto &map = pop_meta.root()->pptr;
-    // map->erase(*p_name);
+bool MergeTreeData::DeleteMetaData(const std::string& part_name) const {
+    persistent_ptr<pmem::obj::string> p_name;
+    pmem::obj::transaction::run(pop_meta, [&] {
+        p_name = pmem::obj::make_persistent<pmem::obj::string>(part_name);
+    });
+    auto &map = pop_meta.root()->pptr;
+    map->erase(*p_name);
     return true;
 }
 
@@ -893,115 +893,115 @@ void MergeTreeData::loadDataParts(bool skip_sanity_checks)
     {
         pool.scheduleOrThrowOnError([&, i]
         {
-            const auto & part_name = part_names_with_disks[i].first;
-            const auto part_disk_ptr = part_names_with_disks[i].second;
+        const auto & part_name = part_names_with_disks[i].first;
+        const auto part_disk_ptr = part_names_with_disks[i].second;
 
-            MergeTreePartInfo part_info;
-            if (!MergeTreePartInfo::tryParsePartName(part_name, &part_info, format_version))
+        MergeTreePartInfo part_info;
+        if (!MergeTreePartInfo::tryParsePartName(part_name, &part_info, format_version))
                 return;
 
-            auto single_disk_volume = std::make_shared<SingleDiskVolume>("volume_" + part_name, part_disk_ptr, 0);
-            auto part = createPart(part_name, part_info, single_disk_volume, part_name);
-            bool broken = false;
+        auto single_disk_volume = std::make_shared<SingleDiskVolume>("volume_" + part_name, part_disk_ptr, 0);
+        auto part = createPart(part_name, part_info, single_disk_volume, part_name);
+        bool broken = false;
 
-            String part_path = relative_data_path + "/" + part_name;
-            String marker_path = part_path + "/" + IMergeTreeDataPart::DELETE_ON_DESTROY_MARKER_FILE_NAME;
-            if (part_disk_ptr->exists(marker_path))
+        String part_path = relative_data_path + "/" + part_name;
+        String marker_path = part_path + "/" + IMergeTreeDataPart::DELETE_ON_DESTROY_MARKER_FILE_NAME;
+        if (part_disk_ptr->exists(marker_path))
+        {
+            LOG_WARNING(log, "Detaching stale part {}{}, which should have been deleted after a move. That can only happen after unclean restart of ClickHouse after move of a part having an operation blocking that stale copy of part.", getFullPathOnDisk(part_disk_ptr), part_name);
+            std::lock_guard loading_lock(mutex);
+            broken_parts_to_detach.push_back(part);
+            ++suspicious_broken_parts;
+                return;
+        }
+
+        try
+        {
+            part->loadColumnsChecksumsIndexes(require_part_metadata, true);
+        }
+        catch (const Exception & e)
+        {
+            /// Don't count the part as broken if there is not enough memory to load it.
+            /// In fact, there can be many similar situations.
+            /// But it is OK, because there is a safety guard against deleting too many parts.
+            if (isNotEnoughMemoryErrorCode(e.code()))
+                throw;
+
+            broken = true;
+            tryLogCurrentException(__PRETTY_FUNCTION__);
+        }
+        catch (...)
+        {
+            broken = true;
+            tryLogCurrentException(__PRETTY_FUNCTION__);
+        }
+
+        /// Ignore and possibly delete broken parts that can appear as a result of hard server restart.
+        if (broken)
+        {
+            if (part->info.level == 0)
             {
-                LOG_WARNING(log, "Detaching stale part {}{}, which should have been deleted after a move. That can only happen after unclean restart of ClickHouse after move of a part having an operation blocking that stale copy of part.", getFullPathOnDisk(part_disk_ptr), part_name);
+                /// It is impossible to restore level 0 parts.
+                LOG_ERROR(log, "Considering to remove broken part {}{} because it's impossible to repair.", getFullPathOnDisk(part_disk_ptr), part_name);
                 std::lock_guard loading_lock(mutex);
-                broken_parts_to_detach.push_back(part);
-                ++suspicious_broken_parts;
-                return;
+                broken_parts_to_remove.push_back(part);
             }
+            else
+            {
+                /// Count the number of parts covered by the broken part. If it is at least two, assume that
+                /// the broken part was created as a result of merging them and we won't lose data if we
+                /// delete it.
+                size_t contained_parts = 0;
 
-            try
-            {
-                part->loadColumnsChecksumsIndexes(require_part_metadata, true);
-            }
-            catch (const Exception & e)
-            {
-                /// Don't count the part as broken if there is not enough memory to load it.
-                /// In fact, there can be many similar situations.
-                /// But it is OK, because there is a safety guard against deleting too many parts.
-                if (isNotEnoughMemoryErrorCode(e.code()))
-                    throw;
+                LOG_ERROR(log, "Part {}{} is broken. Looking for parts to replace it.", getFullPathOnDisk(part_disk_ptr), part_name);
 
-                broken = true;
-                tryLogCurrentException(__PRETTY_FUNCTION__);
-            }
-            catch (...)
-            {
-                broken = true;
-                tryLogCurrentException(__PRETTY_FUNCTION__);
-            }
-
-            /// Ignore and possibly delete broken parts that can appear as a result of hard server restart.
-            if (broken)
-            {
-                if (part->info.level == 0)
+                for (const auto & [contained_name, contained_disk_ptr] : part_names_with_disks)
                 {
-                    /// It is impossible to restore level 0 parts.
-                    LOG_ERROR(log, "Considering to remove broken part {}{} because it's impossible to repair.", getFullPathOnDisk(part_disk_ptr), part_name);
+                    if (contained_name == part_name)
+                        continue;
+
+                    MergeTreePartInfo contained_part_info;
+                    if (!MergeTreePartInfo::tryParsePartName(contained_name, &contained_part_info, format_version))
+                        continue;
+
+                    if (part->info.contains(contained_part_info))
+                    {
+                        LOG_ERROR(log, "Found part {}{}", getFullPathOnDisk(contained_disk_ptr), contained_name);
+                        ++contained_parts;
+                    }
+                }
+
+                if (contained_parts >= 2)
+                {
+                    LOG_ERROR(log, "Considering to remove broken part {}{} because it covers at least 2 other parts", getFullPathOnDisk(part_disk_ptr), part_name);
                     std::lock_guard loading_lock(mutex);
                     broken_parts_to_remove.push_back(part);
                 }
                 else
                 {
-                    /// Count the number of parts covered by the broken part. If it is at least two, assume that
-                    /// the broken part was created as a result of merging them and we won't lose data if we
-                    /// delete it.
-                    size_t contained_parts = 0;
-
-                    LOG_ERROR(log, "Part {}{} is broken. Looking for parts to replace it.", getFullPathOnDisk(part_disk_ptr), part_name);
-
-                    for (const auto & [contained_name, contained_disk_ptr] : part_names_with_disks)
-                    {
-                        if (contained_name == part_name)
-                            continue;
-
-                        MergeTreePartInfo contained_part_info;
-                        if (!MergeTreePartInfo::tryParsePartName(contained_name, &contained_part_info, format_version))
-                            continue;
-
-                        if (part->info.contains(contained_part_info))
-                        {
-                            LOG_ERROR(log, "Found part {}{}", getFullPathOnDisk(contained_disk_ptr), contained_name);
-                            ++contained_parts;
-                        }
-                    }
-
-                    if (contained_parts >= 2)
-                    {
-                        LOG_ERROR(log, "Considering to remove broken part {}{} because it covers at least 2 other parts", getFullPathOnDisk(part_disk_ptr), part_name);
-                        std::lock_guard loading_lock(mutex);
-                        broken_parts_to_remove.push_back(part);
-                    }
-                    else
-                    {
-                        LOG_ERROR(log, "Detaching broken part {}{} because it covers less than 2 parts. You need to resolve this manually", getFullPathOnDisk(part_disk_ptr), part_name);
-                        std::lock_guard loading_lock(mutex);
-                        broken_parts_to_detach.push_back(part);
-                        ++suspicious_broken_parts;
-                    }
+                    LOG_ERROR(log, "Detaching broken part {}{} because it covers less than 2 parts. You need to resolve this manually", getFullPathOnDisk(part_disk_ptr), part_name);
+                    std::lock_guard loading_lock(mutex);
+                    broken_parts_to_detach.push_back(part);
+                    ++suspicious_broken_parts;
                 }
+            }
 
                 return;
-            }
-            if (!part->index_granularity_info.is_adaptive)
-                has_non_adaptive_parts.store(true, std::memory_order_relaxed);
-            else
-                has_adaptive_parts.store(true, std::memory_order_relaxed);
+        }
+        if (!part->index_granularity_info.is_adaptive)
+            has_non_adaptive_parts.store(true, std::memory_order_relaxed);
+        else
+            has_adaptive_parts.store(true, std::memory_order_relaxed);
 
-            part->modification_time = part_disk_ptr->getLastModified(relative_data_path + part_name).epochTime();
-            /// Assume that all parts are Committed, covered parts will be detected and marked as Outdated later
-            part->state = DataPartState::Committed;
+        part->modification_time = part_disk_ptr->getLastModified(relative_data_path + part_name).epochTime();
+        /// Assume that all parts are Committed, covered parts will be detected and marked as Outdated later
+        part->state = DataPartState::Committed;
 
-            std::lock_guard loading_lock(mutex);
-            if (!data_parts_indexes.insert(part).second)
-                throw Exception("Part " + part->name + " already exists", ErrorCodes::DUPLICATE_DATA_PART);
+        std::lock_guard loading_lock(mutex);
+        if (!data_parts_indexes.insert(part).second)
+            throw Exception("Part " + part->name + " already exists", ErrorCodes::DUPLICATE_DATA_PART);
 
-            addPartContributionToDataVolume(part);
+        addPartContributionToDataVolume(part);
         });
     }
 

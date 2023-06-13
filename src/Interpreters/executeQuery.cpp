@@ -634,6 +634,13 @@ static std::tuple<ASTPtr, BlockIO> executeQueryImpl(
                 }
             }
 
+            // here to trace query type(pmem optimized or not)
+            if (settings.pmem_opt == 1) {
+                elem.query_kind = "PMEM_OPT";
+            } else if (settings.pmem_opt == 2) {
+                elem.query_kind = "UN_OPT";
+            }
+
             /// Common code for finish and exception callbacks
             auto status_info_to_query_log = [](QueryLogElement &element, const QueryStatusInfo &info, const ASTPtr query_ast) mutable
             {

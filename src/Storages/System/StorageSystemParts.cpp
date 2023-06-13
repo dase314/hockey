@@ -23,6 +23,7 @@ StorageSystemParts::StorageSystemParts(const StorageID & table_id_)
         {"name",                                        std::make_shared<DataTypeString>()},
         {"uuid",                                        std::make_shared<DataTypeUUID>()},
         {"part_type",                                   std::make_shared<DataTypeString>()},
+        {"part_location",                               std::make_shared<DataTypeString>()},
         {"active",                                      std::make_shared<DataTypeUInt8>()},
         {"marks",                                       std::make_shared<DataTypeUInt64>()},
         {"rows",                                        std::make_shared<DataTypeUInt64>()},
@@ -98,6 +99,11 @@ void StorageSystemParts::processNextStorage(MutableColumns & columns_, const Sto
         columns_[i++]->insert(part->name);
         columns_[i++]->insert(part->uuid);
         columns_[i++]->insert(part->getTypeName());
+        if (part->getType() == MergeTreeDataPartType::PMCS) {
+            columns_[i++]->insert("PMEM");
+        } else {
+            columns_[i++]->insert("SSD");
+        }
         columns_[i++]->insert(part_state == State::Committed);
         columns_[i++]->insert(part->getMarksCount());
         columns_[i++]->insert(part->rows_count);

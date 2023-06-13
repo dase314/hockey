@@ -783,7 +783,7 @@ public:
 
     // for pm log
     const uint64_t LOG_POOL_SIZE = uint64_t(1024) * 1024 * 1024 * 4;
-    const uint64_t META_POOL_SIZE = uint64_t(1024) * 1024 * 512ls;
+    const uint64_t META_POOL_SIZE = uint64_t(1024) * 1024 * 512;
     struct Tree {
         pmem::obj::p<int> cnt;
     };

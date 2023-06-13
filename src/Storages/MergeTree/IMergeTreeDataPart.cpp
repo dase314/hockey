@@ -1140,6 +1140,7 @@ void IMergeTreeDataPart::calculateColumnsSizesOnDisk()
 ColumnSize IMergeTreeDataPart::getColumnSize(const String & column_name, const IDataType & /* type */) const
 {
     /// For some types of parts columns_size maybe not calculated
+    std::lock_guard lock(cs_mu);
     auto it = columns_sizes.find(column_name);
     if (it != columns_sizes.end())
         return it->second;
@@ -1147,6 +1148,7 @@ ColumnSize IMergeTreeDataPart::getColumnSize(const String & column_name, const I
     return ColumnSize{};
 }
 void IMergeTreeDataPart::updateColumnSize(const String & column_name, size_t cnt) const {
+    std::lock_guard lock(cs_mu);
     if (columns_sizes.empty()) {
         for (auto col : columns) {
             columns_sizes.emplace(col.name, ColumnSize{});
@@ -1154,7 +1156,7 @@ void IMergeTreeDataPart::updateColumnSize(const String & column_name, size_t cnt
     }
     auto it = columns_sizes.find(column_name);
     if (it != columns_sizes.end()) {
-        it->second.access_cnt = it->second.access_cnt * (1 - Alpha) + cnt * Alpha;
+        it->second.access_cnt = it->second.access_cnt + cnt;
     }
 }
 
@@ -1172,6 +1174,7 @@ double IMergeTreeDataPart::getWorth() const {
 
 void IMergeTreeDataPart::accumulateColumnSizes(ColumnToSize & column_to_size) const
 {
+    std::lock_guard lock(cs_mu);
     for (const auto & [column_name, size] : columns_sizes)
         column_to_size[column_name] = size.data_compressed;
 }

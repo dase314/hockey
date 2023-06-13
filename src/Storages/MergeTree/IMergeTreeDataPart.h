@@ -377,6 +377,9 @@ protected:
     /// Size for each column, calculated once in calcuateColumnSizesOnDisk
     mutable ColumnSizeByName columns_sizes;
 
+    //column sizes mutex
+    mutable std::mutex cs_mu;
+
     /// Total size on disk, not only columns. May not contain size of
     /// checksums.txt and columns.txt. 0 - if not counted;
     UInt64 bytes_on_disk{0};

@@ -30,6 +30,7 @@ struct Settings;
     M(UInt64, write_ahead_log_max_bytes, 1024 * 1024 * 1024, "Rotate WAL, if it exceeds that amount of bytes", 0) \
     M(Bool, enable_nvm_part, false, "only for test, enable nvm part for insert and merge", 0) \
     M(Bool, enable_pmcs_part, false, "only for test, enable pmcs part for insert and merge", 0) \
+    M(Bool, enable_hybrid, false, "only for test, enable hybrid storage test", 0) \
     M(Bool, enable_log_part, false, "only for test, enable log part", 0) \
     M(UInt64, max_log_part_rows, 81960, "only for test, if insert part.rows() > max_log_part_rows, we will bypass log part.", 0) \
     \

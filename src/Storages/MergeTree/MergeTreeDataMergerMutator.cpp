@@ -703,7 +703,7 @@ MergeTreeData::MutableDataPartPtr MergeTreeDataMergerMutator::mergePartsToTempor
         merging_columns,
         merging_column_names);
 
-    if (data.getSettings()->enable_pmcs_part) {
+    if (data.getSettings()->enable_pmcs_part && data.getSettings()->enable_hybrid) {
         auto worth_threadhold = data.getMergeThreshold();
         double future_worth = 0;
         for (auto part : future_part.parts) {
